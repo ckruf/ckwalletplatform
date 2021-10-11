@@ -1,4 +1,5 @@
 from flask import request
+from werkzeug.exceptions import HTTPException
 from flask_restx import Resource, Namespace, reqparse, marshal_with, abort, fields
 from . import db
 from .models import Transaction, Player, C_Transaction, Wallet, Game, Session, Round
@@ -20,6 +21,10 @@ balance_fields = wallet_ns.model('Balance', {
     'real_balance': fields.Integer,
     'bonus_balance': fields.Integer})
 
+validate_balance_fields = wallet_ns.model('Validation balance', {
+    'amount_real': fields.Integer,
+    'amount_bonus': fields.Integer
+})
 
 @wallet_ns.route('/balance')
 class WalletOperations(Resource):
@@ -104,7 +109,6 @@ class StartSession(Resource):
 
 validation_args = reqparse.RequestParser()
 validation_args.add_argument('player_id', type=int, required=True)
-validation_args.add_argument('session_id', type=str, required=True)
 validation_args.add_argument('credentials', type=dict, required=False)
 validation_args.add_argument('game_id', type=str, required=True)
 
@@ -160,15 +164,27 @@ wegas_response_fields = wallet_ns.model('Wegas_Response', {
 
 })
 
-@wallet_ns.route('/validate')
+validate_response_fields = wallet_ns.model("Response to 'validate' request", {
+    'success': fields.Integer,
+    'wallet_balance': fields.Nested(validate_balance_fields, skip_none=True),
+    'wallet_currency': fields.String,
+    'player_nickname': fields.String,
+    'player_country': fields.String,
+    'player_city': fields.String,
+    'player_key': fields.Integer,
+
+})
+
+
+@wallet_ns.route('/validate/<string:session_id>')
 class ValidateSession(Resource):
-    @wallet_ns.marshal_with(wegas_response_fields, skip_none=True)
+    @wallet_ns.marshal_with(validate_response_fields, skip_none=True)
     @wallet_ns.expect(validation_args)
     @wallet_ns.doc('Endpoint for Wegas to validate session')
-    def post(self):
+    def post(self, session_id):
         args = validation_args.parse_args()
         # Check whether session exists on our side and all relevant params match
-        session = Session.query.filter(Session.session_id == args['session_id']).one_or_none()
+        session = Session.query.filter(Session.session_id == session_id).one_or_none()
         if session is None:
             abort(404, message='Session with this id not found')
         if args['player_id'] and args['player_id'] is not None:
@@ -192,12 +208,12 @@ class ValidateSession(Resource):
         player = get_player(args['player_id'])
         return {
             'success': 1,
-            'balance': balance,
-            'currency': currency,
-            'nickname': player.nickname,
-            'country': player.country,
-            'city': player.city,
-            'player_id': player.player_id
+            'wallet_balance': balance,
+            'wallet_currency': currency,
+            'player_nickname': player.nickname,
+            'player_country': player.country,
+            'player_city': player.city,
+            'player_key': player.player_id
         }
 
 
@@ -229,9 +245,11 @@ class MakeBet(Resource):
         args = transaction_args.parse_args()
         session = check_session(args)
         balance = get_current_balance(args['player_id'])
+        available_balance = (balance['real_balance'] + balance['bonus_balance'])
         # check whether player has sufficient balance
-        if args['amount'] > (balance['real_balance'] + balance['bonus_balance']):
-            return {'success':0, 'message': 'Insufficient balance'}
+        if args['amount'] > available_balance:
+            raise InsufficientBalanceError(args['amount'], available_balance)
+            # return {'success': 0, 'message': 'Insufficient balance'}
         # check whether amount is positive
         if args['amount'] <= 0:
             return {'success':0, 'message': 'Bet amount must be positive'}
@@ -430,3 +448,28 @@ Given an external round id (round_id from Wegas) and a session id, return the co
     :rtype SQLAlchemy Query object representing a record in the Round table
     """
     return Round.query.filter(Round.ext_round_id == ext_round_id, Round.session_id == session_id).one_or_none()
+
+error_mdl = wallet_ns.model('Error_model', {
+    'err_code': fields.Integer,
+    'err_type': fields.String,
+    'message': fields.String
+})
+
+class InsufficientBalanceError(HTTPException):
+    def __init__(self, bet_amount, balance):
+        self.http_code = 400
+        self.err_code = 4001
+        self.err_type = type(self).__name__
+        self.message = f"Insufficient balance. You tried to bet {bet_amount}, but your balance is only {balance}"
+
+
+
+@wallet_ns.errorhandler(InsufficientBalanceError)
+@wallet_ns.marshal_with(error_mdl)
+def handle_insufficient_balance_error(e):
+    err = {
+        'err_code': e.err_code,
+        'err_type': e.err_type,
+        'message': e.message
+    }
+    return err, e.http_code

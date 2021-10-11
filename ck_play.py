@@ -17,7 +17,7 @@ class CKWalletClient(login.WalletClient, web.Repeater):
         WIN = '/wallet/win'
         ENDROUND = '/wallet/endround'
         ENDSESSION = '/wallet/endsession'
-        #ROLLBACK = '/GATIntegrationService/CancelReserve'
+        # ROLLBACK = '/GATIntegrationService/CancelReserve'
 
         def url(self):
             """
@@ -47,9 +47,7 @@ class CKWalletClient(login.WalletClient, web.Repeater):
 
     @classmethod
     def validate(cls, session_key, game_id, player_id=None):
-        print("Entered validate in CK play")
         url = CKWalletClient.Methods.VALIDATE.url()
-        print(f"url is {url}")
         payload = {
             'player_id':player_id,
             'session_id':session_key,
@@ -98,9 +96,7 @@ class CKWalletClient(login.WalletClient, web.Repeater):
             'transaction_id': transaction_id
         }
         json_response = cls.ask(url, data=payload)
-        print(f"In ck_play, json_response is {json_response}")
         ret = web.Wallet.from_dict(json_response)
-        print(f"ret is {ret}")
         return ret
 
     @classmethod
@@ -120,7 +116,5 @@ class CKWalletClient(login.WalletClient, web.Repeater):
             'session_id': session_key
         }
         json_response = cls.ask(url, data=payload)
-        print('line 121')
         ret = web.Balance.from_dict(json_response)
-        print(f"ret is {ret}")
         return ret
